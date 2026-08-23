@@ -1,0 +1,65 @@
+services:
+
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    # Sin 'ports': la base de datos NO se expone. Solo la ve 'backend'.
+    healthcheck:
+      # Sin credenciales a propósito: 'ping' comprueba que el servidor
+      # acepta conexiones, que es lo que necesita depends_on.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    networks: [interna]
+
+  backend:
+    build: ./blog
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:mysql://db:3306/${MYSQL_DATABASE}
+      DB_USER: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      UPLOAD_DIR: /app/uploads/posts
+      CORS_ORIGINS: https://${DOMINIO}
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [interna, publica]
+
+  caddy:
+    build: ./auto-blog
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMINIO: ${DOMINIO}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data       # certificados TLS
+      - caddy_config:/config
+    depends_on: [backend]
+    networks: [publica]
+
+volumes:
+  db_data:
+  uploads:
+  caddy_data:
+  caddy_config:
+
+networks:
+  interna:
+    internal: true    # sin ruta a internet: solo db ↔ backend
+  publica: 
