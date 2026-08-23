@@ -147,6 +147,27 @@ sin web.
 `/opt/blog` se creó copiando ficheros a mano, así que todavía no es un clon. Hay que
 convertirlo, **una sola vez**:
 
+> **Antes de empezar, comprueba qué versiona el repositorio.** Desde tu WSL:
+>
+> ```bash
+> cd ~/vsCode-projects/blog_deploy && git ls-files
+> ```
+>
+> Deben aparecer **solo estos seis**: `.env.example`, `.gitignore`, `Caddyfile`,
+> `DESPLIEGUE.md`, `docker-compose.local.yml`, `docker-compose.yml`.
+>
+> Si aparece `blog` o `auto-blog`, **para**. En tu WSL son enlaces simbólicos y en el VPS son
+> clones de verdad: el `git reset --hard` de más abajo **borraría el clon y lo sustituiría por
+> un enlace roto, sin dar ningún error**. Sácalos del índice antes de continuar:
+>
+> ```bash
+> git rm --cached auto-blog        # --cached NO borra el fichero de tu disco
+> git commit -m "Dejar de versionar el enlace" && git push
+> ```
+>
+> Recuerda que el `.gitignore` solo afecta a ficheros que git aún no sigue: añadir una línea
+> no basta si el fichero ya estaba versionado.
+
 ```bash
 cd /opt/blog
 
