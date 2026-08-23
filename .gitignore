@@ -1,3 +1,4 @@
 .env
 blog
-auto-blog.vscode/
+auto-blog
+.vscode/
