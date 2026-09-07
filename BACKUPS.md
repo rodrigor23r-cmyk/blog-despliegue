@@ -26,19 +26,64 @@ a volver a hacer login, porque cambia la clave JWT.
 
 ## El día a día
 
+> ## ⚠️ Cada comando va en UNA máquina concreta
+>
+> | Comando | Dónde |
+> |---|---|
+> | `backup.sh` | **VPS** |
+> | `backup.log`, `ls /var/backups/blog` | **VPS** |
+> | `rsync` | **WSL** |
+> | restaurar | **VPS** |
+>
+> **`backup.sh` existe en las dos máquinas** —está versionado en este repositorio— pero
+> **solo funciona en el VPS**. Si lo lanzas en la WSL falla así:
+>
+> ```
+> ./backup.sh: line 14: cd: /opt/blog: No such file or directory
+> ```
+>
+> No es un fallo del script: su primera instrucción es `cd /opt/blog`, y esa carpeta solo
+> existe en el servidor. Entra primero:
+>
+> ```bash
+> ssh deploy@77.37.122.44
+> ```
+>
+> Y el `rsync` es al revés: **se lanza desde la WSL**, y *tira* de las copias del VPS. Si lo
+> ejecutaras en el servidor, copiarías en la dirección contraria.
+
+### 🖥️ EN EL VPS
+
 ```bash
-# --- En el VPS ---
+ssh deploy@77.37.122.44
 cd /opt/blog
 
 ./backup.sh                        # lanzar una copia AHORA
 cat /var/backups/blog/backup.log   # qué hicieron las copias automáticas
-ls -lh /var/backups/blog/          # las copias que hay, 14 días de retención
-
-# --- Desde la WSL ---
-rsync -avz --delete deploy@77.37.122.44:/var/backups/blog/ ~/backups-blog/
+ls -lh /var/backups/blog/          # las copias que hay
 ```
 
-### `./backup.sh` — lanzar una copia a mano
+> `./backup.sh` con el `./` delante solo funciona **estando dentro de `/opt/blog`**. Desde
+> cualquier otra carpeta del servidor, usa la ruta absoluta —el script hace su propio `cd`—:
+>
+> ```bash
+> /opt/blog/backup.sh
+> ```
+>
+> Recuerda también que `~` (tu carpeta personal, `/home/deploy`) **no es** `/`. `/opt/blog`
+> cuelga de la raíz del sistema de ficheros, así que desde tu carpeta personal no lo verás
+> con `ls`.
+
+### 💻 EN TU WSL
+
+```bash
+rsync -avz --delete deploy@77.37.122.44:/var/backups/blog/ ~/backups-blog/
+ls -lh ~/backups-blog/
+```
+
+---
+
+### `./backup.sh` — lanzar una copia a mano · **en el VPS**
 
 Lo mismo que hace el cron, pero cuando tú quieras. **Ejecútalo siempre antes de un despliegue que
 toque una clase con `@Entity`**: `ddl-auto=update` modifica las tablas al arrancar el backend y
@@ -47,7 +92,7 @@ algunos cambios no tienen vuelta atrás.
 Tarda unos segundos y no interrumpe el servicio: `mysqldump --single-transaction` vuelca desde un
 instante congelado mientras el blog sigue atendiendo visitas.
 
-### `cat /var/backups/blog/backup.log` — vigilar las copias automáticas
+### `cat /var/backups/blog/backup.log` — vigilar las copias automáticas · **en el VPS**
 
 **El comando más importante de esta página.** Un backup automático que falla en silencio es peor
 que no tener backup, porque crees que estás cubierto.
@@ -55,21 +100,26 @@ que no tener backup, porque crees que estás cubierto.
 Cada ejecución añade su fecha, un `OK` y el tamaño de los dos ficheros. Si ves `ERROR`, o si la
 última línea es de hace días, algo se rompió. Míralo de vez en cuando.
 
-### `ls -lh /var/backups/blog/` — ver qué copias hay
+### `ls -lh /var/backups/blog/` — ver qué copias hay · **en el VPS**
 
 ```
 db-2026-08-23_0330.sql.gz        ~60 KB
 uploads-2026-08-23_0330.tar.gz   ~4,3 MB
 ```
 
-Dos ficheros por día, catorce días. Si el `.sql.gz` bajara a unos pocos cientos de bytes, sería
-un volcado vacío: el script aborta antes de guardar algo así, pero conviene mirarlo.
+Dos ficheros por día. Si el `.sql.gz` bajara a unos pocos cientos de bytes, sería un volcado
+vacío: el script aborta antes de guardar algo así, pero conviene mirarlo.
+
+> **No esperes exactamente 14 copias.** La rotación es `find -mtime +14 -delete`, y `+14`
+> significa «con más de 14 períodos completos de 24 horas», no «las 14 más recientes». Se
+> conservan las franjas de 0 a 14 días, así que el número se estabiliza en **15 o 16 pares**.
+> Es rotación por antigüedad, no por cuenta: lo que garantiza son dos semanas de historia.
 
 **Aquí no aparece nunca un fichero a medio escribir.** El script escribe en `.parcial` y solo
 renombra al terminar, y el renombrado es atómico. Así la rotación no puede borrar la copia buena
 dejándote una corrupta con buen nombre.
 
-### `rsync` — sacar las copias del VPS
+### `rsync` — sacar las copias del VPS · **en tu WSL**
 
 **Un backup que vive en la misma máquina que protege no es un backup.** Si el disco del VPS se
 corrompe o borras el servidor por error, las copias se van con él.
@@ -104,7 +154,7 @@ Destino: `/var/backups/blog`, permisos **700**, propiedad de `deploy`.
 
 ---
 
-## Cómo restaurar de verdad
+## Cómo restaurar de verdad · **todo en el VPS**
 
 ### La base de datos
 
@@ -143,7 +193,7 @@ corrompe el flujo binario del `.tar.gz`.
 
 ---
 
-## Comprobar que un backup sirve, sin tocar producción
+## Comprobar que un backup sirve, sin tocar producción · **en el VPS**
 
 Tener ficheros no es tener backups. Esto restaura en una base de datos de usar y tirar y cuenta
 lo que ha llegado:
