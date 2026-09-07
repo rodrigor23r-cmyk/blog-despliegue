@@ -53,6 +53,7 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - uploads:/srv/uploads:ro # fotos en solo-lectura
+      - ./logs:/var/log/caddy   # los logs, legibles desde el anfitrión
       - caddy_data:/data       # certificados TLS
       - caddy_config:/config
     depends_on: [backend]
