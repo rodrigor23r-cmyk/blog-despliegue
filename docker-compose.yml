@@ -49,6 +49,7 @@ services:
       DOMINIO: ${DOMINIO}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - uploads:/srv/uploads:ro # fotos en solo-lectura
       - caddy_data:/data       # certificados TLS
       - caddy_config:/config
     depends_on: [backend]
