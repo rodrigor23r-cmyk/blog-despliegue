@@ -1,3 +1,5 @@
+name: blog
+
 services:
 
   db:
@@ -46,6 +48,30 @@ services:
         condition: service_healthy
     networks: [interna, publica]
 
+  gastos-api:
+    build: ./gastos-backend
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:mysql://db:3306/gastos
+      DB_USER: ${GASTOS_DB_USER}
+      DB_PASSWORD: ${GASTOS_DB_PASSWORD}
+      JWT_SECRET: ${GASTOS_JWT_SECRET}
+      CORS_ORIGINS: https://gastos.${DOMINIO}
+    healthcheck:
+      # La imagen no trae curl ni wget, pero sí bash (comprobado el 11-09).
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /actuator/health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && head -1 <&3 | grep -q ' 200 '"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      db:
+        condition: service_healthy
+    # Sin 'ports' y sin volúmenes: las fotos de tickets no se persisten (D10).
+    networks: [interna, publica]
+
   caddy:
     build: ./auto-blog
     restart: unless-stopped
@@ -62,7 +88,7 @@ services:
       - ./logs:/var/log/caddy   # los logs, legibles desde el anfitrión
       - caddy_data:/data       # certificados TLS
       - caddy_config:/config
-    depends_on: [backend]
+    depends_on: [backend, gastos-api]
     networks: [publica]
 
 volumes:

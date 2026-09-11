@@ -49,3 +49,14 @@ api.{$DOMINIO} {
               reverse_proxy backend:8080
       }
 }
+
+# ---------- API de gastos ----------
+api.gastos.{$DOMINIO} {
+      import registro gastos-api
+      encode gzip
+
+      # Sin handle_path para ficheros: las fotos de tickets no se persisten (D10),
+      # así que TODO va al backend. El bloque de gastos.{$DOMINIO} se añadirá
+      # cuando exista el contenedor del frontend.
+      reverse_proxy gastos-api:8080
+}
