@@ -18,13 +18,16 @@ COPIA=$(ls -1t "$ORIGEN"/gastos-*.sql.gz 2>/dev/null | head -1 || true)
 [ -n "$COPIA" ] || { echo "ERROR: no hay ningún gastos-*.sql.gz en $ORIGEN" >&2; exit 1; }
 echo "Copia a ensayar: $COPIA  ($(stat -c%s "$COPIA") bytes, del $(date -r "$COPIA" '+%F %T'))"
 
-sql() { docker compose exec -T db sh -c "MYSQL_PWD=\"\$MYSQL_ROOT_PASSWORD\" exec mysql -uroot $*"; }
+# Ojo con el paso de argumentos: "$@" (no $*) y el sh de dentro recibe cada argumento
+# entero. Con $* se pegan todos en una cadena, el sh la vuelve a partir por espacios,
+# y mysql acaba con cinco argumentos sueltos en vez de un -e: imprime su ayuda y sale 1.
+sql() { docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -uroot "$@"' sh "$@"; }
 
 echo "== Creando base desechable $ENSAYO =="
 sql -e "DROP DATABASE IF EXISTS $ENSAYO; CREATE DATABASE $ENSAYO CHARACTER SET utf8mb4 COLLATE utf8mb4_spanish2_ci;"
 
 echo "== Restaurando la copia en ella =="
-zcat "$COPIA" | docker compose exec -T db sh -c "MYSQL_PWD=\"\$MYSQL_ROOT_PASSWORD\" exec mysql -uroot $ENSAYO"
+zcat "$COPIA" | docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -uroot "$1"' sh "$ENSAYO"
 
 echo
 echo "===== PRODUCCIÓN frente a LA COPIA RESTAURADA ====="

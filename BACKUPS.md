@@ -11,7 +11,8 @@ mismo repositorio.
 
 | | Dónde vive | Cómo se respalda |
 |---|---|---|
-| Posts, usuarios, categorías, comentarios | volumen `blog_db_data` | `mysqldump` comprimido |
+| Posts, usuarios, categorías, comentarios | volumen `blog_db_data` | `mysqldump` comprimido → `db-FECHA.sql.gz` |
+| **Gastos, liquidaciones, tiendas** | misma instancia, base `gastos` | `mysqldump` comprimido → `gastos-FECHA.sql.gz` |
 | Imágenes subidas | volumen `blog_uploads` | `tar.gz` |
 | Código del backend y del frontend | GitHub | ya está en git |
 | `docker-compose.yml`, `Caddyfile`, `backup.sh` | GitHub (`blog-despliegue`) | ya está en git |
@@ -218,6 +219,47 @@ Funciona porque el volcado se hace **sin `--databases`**: no contiene `CREATE DA
 solo tablas, y por eso puede importarse en una base con otro nombre. Con `--databases` el fichero
 se empeñaría en escribir sobre `blog` ignorando el nombre que le das, y el «ensayo» sería una
 restauración real sobre producción.
+
+### Ensayo verificado el 2026-09-11 · la base `gastos`
+
+Desde el 2026-09-11 `backup.sh` vuelca **tres** cosas, no dos: la base del blog, la base `gastos`
+y el volumen de imágenes. Cada base en su propio fichero, para que restaurar una no arrastre la
+otra.
+
+El ensayo está automatizado:
+
+```bash
+cd /opt/blog && bash ensayo-restauracion.sh
+```
+
+Coge la copia más reciente de `gastos`, la restaura en una base **desechable** (`gastos_ensayo`),
+compara recuentos e importes contra producción, comprueba que ningún gasto apunte a una tienda
+inexistente, y borra la base de ensayo. **No toca producción en ningún momento.**
+
+Resultado del 2026-09-11, sobre el volcado real del histórico:
+
+```
+tabla              producción   copia
+gastos                    473     473
+liquidaciones              11      11
+tiendas                    32      32
+usuarios                    2       2
+suma (céntimos)       1243661 1243661
+huérfanos: 0      →  RESTAURABLE Y COMPLETA
+```
+
+La suma se compara **en céntimos, como entero**: comparar decimales invita a que un redondeo de
+representación haga fallar un ensayo que en realidad está bien.
+
+> ⚠️ El ensayo usa **root**, no `gastos_user`. Este último solo tiene privilegios sobre `gastos.*`
+> y no puede crear la base desechable. Comprobado al intentarlo: es el aislamiento de privilegios
+> funcionando, no un fallo.
+
+El guardián de tamaño para `gastos` está en **5 KB**: 473 apuntes ocupan ~11 KB comprimidos, así
+que un fichero menor es un volcado truncado. Un backup vacío que parece bueno es peor que no
+tenerlo.
+
+---
 
 ### Ensayo verificado el 2026-08-23
 

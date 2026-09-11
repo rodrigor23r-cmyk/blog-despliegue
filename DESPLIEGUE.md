@@ -108,6 +108,48 @@ cacheados. Los viejos, con su `immutable`, simplemente dejan de pedirse.
 
 ---
 
+## Caso D — Desplegar o actualizar `gastos`
+
+La aplicación de gastos vive en el mismo Compose, con su propia base, su propio usuario de MySQL
+y su propio subdominio. Todo el procedimiento está en un script:
+
+```bash
+# En el VPS
+cd /opt/blog
+git pull
+bash desplegar-gastos.sh
+```
+
+Clona o actualiza `gastos-backend`, reconstruye, levanta, espera al healthcheck, reinicia Caddy y
+comprueba por HTTPS que `/actuator/health` da 200, que `/v3/api-docs` da 404 (springdoc apagado en
+producción) y que `/api/saldo` sin token da 401. Es idempotente.
+
+**La primera vez**, antes de eso, hay que preparar la base y las variables:
+
+```bash
+bash preparar-gastos.sh     # crea la base 'gastos', el usuario gastos_user y las tres GASTOS_* del .env
+```
+
+> ⚠️ El repositorio se llama **`gastos_backend`** (guion bajo) y el directorio en el VPS tiene que
+> ser **`gastos-backend`** (guion medio), que es lo que dice `build: ./gastos-backend`. El script
+> clona con el destino explícito; un `git clone` a secas crearía el nombre equivocado.
+
+Las direcciones, para no confundirlas:
+
+```
+taller-barataria.io              → el blog
+api.taller-barataria.io          → API del blog
+gastos.taller-barataria.io       → la PWA de gastos (pendiente del frontend)
+api.gastos.taller-barataria.io   → API de gastos
+```
+
+La API de gastos está en un **subdominio**, nunca en una ruta. `taller-barataria.io/gastos/...`
+devuelve 200 pero es el `index.html` del Angular del blog, porque su `try_files` responde a
+cualquier ruta. Para saber quién contesta, mira el cuerpo del 401: el del blog es
+`{"estado":...,"mensaje":...}`, el de gastos es `ProblemDetail` (`{"type":...,"title":...}`).
+
+---
+
 ## Caso C — Cambio en `docker-compose.yml` o en el `Caddyfile`
 
 Estos ficheros viven en el repositorio **`blog-despliegue`**, así que viajan por git
@@ -126,17 +168,28 @@ git pull
 Y luego, según qué tocaras:
 
 ```bash
-# Si tocaste el Caddyfile: valida y recarga EN CALIENTE, sin cortar nada
-docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
-docker compose exec caddy caddy reload  --config /etc/caddy/Caddyfile
+# Si tocaste el Caddyfile: valida y REINICIA (ver el aviso de abajo)
+docker compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile
+docker compose restart caddy
 
 # Si tocaste el docker-compose.yml: recrear los servicios afectados
 docker compose up -d
 ```
 
-`caddy reload` carga la configuración nueva **sin cerrar ni una sola conexión en curso**.
-Cero corte. El `validate` previo evita el escenario feo: recargar con una errata y quedarte
-sin web.
+> ⚠️ **Corrección del 2026-09-11: tras un `git pull`, `caddy reload` NO sirve.**
+>
+> El `Caddyfile` se monta como **fichero suelto** (`./Caddyfile:/etc/caddy/Caddyfile:ro`), y
+> `git pull` **reemplaza** los ficheros en vez de modificarlos: crea el contenido nuevo y lo
+> renombra encima. Eso cambia el *inode*, y el montaje del contenedor sigue atado al viejo — que
+> ya no tiene nombre en el disco pero existe. El contenedor sigue leyendo la versión antigua, y un
+> `reload` relee ese fantasma **sin dar ningún error**.
+>
+> Comprobado: modificar el fichero en sitio (`>>`) sí se ve dentro del contenedor; reemplazarlo,
+> no. Costó una tarde de «el bloque está en el fichero pero Caddy no lo ve».
+>
+> `docker compose restart caddy` rehace el montaje. Corta el servicio **dos o tres segundos**.
+> El `reload` en caliente sigue valiendo si editas el `Caddyfile` directamente en el VPS con un
+> editor que escriba en sitio.
 
 > El `git pull` **no toca el `.env`**: está en el `.gitignore`, así que git lo ignora por
 > completo. Tampoco toca `blog/` ni `auto-blog/`, ignorados por la misma razón, aunque en el
