@@ -34,7 +34,28 @@ if [ "$(stat -c%s "$TMP_DB")" -lt 1000 ]; then
 fi
 mv "$TMP_DB" "$DESTINO/db-$FECHA.sql.gz"
 
-# ---------- 2. Imágenes subidas ----------
+# ---------- 2. Base de datos de gastos ----------
+# Base aparte, usuario aparte, volcado aparte: si un día se restaura una,
+# no arrastra la otra.
+TMP_GASTOS="$DESTINO/gastos-$FECHA.sql.gz.parcial"
+
+docker compose exec -T db sh -c '
+    MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysqldump -uroot \
+        --single-transaction \
+        --no-tablespaces \
+        --default-character-set=utf8mb4 \
+        gastos
+' | gzip > "$TMP_GASTOS"
+
+# 473 gastos ocupan ~11 KB comprimidos. Menos de 5 KB es un volcado incompleto.
+if [ "$(stat -c%s "$TMP_GASTOS")" -lt 5000 ]; then
+    echo "ERROR: el volcado de 'gastos' está vacío o incompleto"
+    rm -f "$TMP_GASTOS"
+    exit 1
+fi
+mv "$TMP_GASTOS" "$DESTINO/gastos-$FECHA.sql.gz"
+
+# ---------- 3. Imágenes subidas ----------
 TMP_UP="$DESTINO/uploads-$FECHA.tar.gz.parcial"
 
 docker compose exec -T backend tar czf - -C /app/uploads . > "$TMP_UP"
@@ -46,10 +67,10 @@ if [ "$(stat -c%s "$TMP_UP")" -lt 1000 ]; then
 fi
 mv "$TMP_UP" "$DESTINO/uploads-$FECHA.tar.gz"
 
-# ---------- 3. Rotación ----------
+# ---------- 4. Rotación ----------
 find "$DESTINO" -type f \( -name '*.gz' -o -name '*.parcial' \) \
      -mtime +"$RETENCION" -delete
 
 echo "OK — $(ls -1 "$DESTINO"/*.gz | wc -l) copias en $DESTINO"
-ls -lh "$DESTINO/db-$FECHA.sql.gz" "$DESTINO/uploads-$FECHA.tar.gz"
+ls -lh "$DESTINO/db-$FECHA.sql.gz" "$DESTINO/gastos-$FECHA.sql.gz" "$DESTINO/uploads-$FECHA.tar.gz"
 
