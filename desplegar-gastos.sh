@@ -60,10 +60,14 @@ if [ "${ESTADO:-}" != healthy ]; then
     exit 1
 fi
 
-# ---------- 5. Recargar Caddy para que sirva el sitio nuevo ----------
-# Recargar y no reiniciar: el blog no se entera.
-echo "== Recargando Caddy =="
-docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+# ---------- 5. Reiniciar Caddy para que sirva el sitio nuevo ----------
+# REINICIAR y no recargar, aunque el reinicio corte el blog 2-3 segundos:
+# el Caddyfile se monta como FICHERO suelto, y 'git pull' lo REEMPLAZA (crea y
+# renombra), así que el inode cambia y el contenedor sigue viendo el viejo.
+# Un 'caddy reload' releería ese fichero fantasma. Comprobado el 11-09.
+echo "== Reiniciando Caddy (corta el blog unos segundos) =="
+docker compose restart caddy
+sleep 3
 
 # ---------- 6. Comprobar de extremo a extremo ----------
 echo
@@ -77,11 +81,17 @@ SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=\"gastos\";"' 
 
 echo "-- HTTPS a través de Caddy (puede tardar en el primer certificado) --"
 for i in $(seq 1 12); do
-    CODIGO=$(curl -sS -o /dev/null -w '%{http_code}' "https://$DOMINIO_API/actuator/health" 2>/dev/null || echo 000)
+    CODIGO=$(curl -sS -o /dev/null -w '%{http_code}' "https://$DOMINIO_API/actuator/health" 2>/dev/null) || CODIGO=000
     [ "$CODIGO" = 200 ] && break
     echo -n "."; sleep 5
 done
+echo
 echo "  https://$DOMINIO_API/actuator/health -> $CODIGO   (debe ser 200)"
+if [ "$CODIGO" != 200 ]; then
+    echo "  Si es 000 con 'tlsv1 alert internal error', Caddy no tiene certificado para ese nombre."
+    echo "  Comprueba que el bloque está cargado:  docker compose exec -T caddy tail -12 /etc/caddy/Caddyfile"
+    echo "  y qué dice del certificado:            docker compose logs caddy --tail 60 | grep -i acme"
+fi
 
 echo "-- Swagger debe estar APAGADO en prod --"
 curl -sS -o /dev/null -w "  /v3/api-docs -> %{http_code}   (debe ser 404)\n" "https://$DOMINIO_API/v3/api-docs" || true
