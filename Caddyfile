@@ -56,7 +56,7 @@ api.gastos.{$DOMINIO} {
       encode gzip
 
       # Sin handle_path para ficheros: las fotos de tickets no se persisten (D10),
-
+      # así que TODO va al backend.
       reverse_proxy gastos-api:8080
 }
 
