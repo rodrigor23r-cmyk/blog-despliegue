@@ -71,7 +71,12 @@ services:
         condition: service_healthy
     # Sin 'ports' y sin volúmenes: las fotos de tickets no se persisten (D10).
     networks: [interna, publica]
-
+  gastos-web:
+    build: ./gastos-frontend
+    restart: unless-stopped
+    mem_limit: 128m
+    # Sin 'ports': la única puerta a internet es el 443 de Caddy.
+    networks: [publica]
   caddy:
     build: ./auto-blog
     restart: unless-stopped
@@ -88,7 +93,7 @@ services:
       - ./logs:/var/log/caddy   # los logs, legibles desde el anfitrión
       - caddy_data:/data       # certificados TLS
       - caddy_config:/config
-    depends_on: [backend, gastos-api]
+    depends_on: [backend, gastos-api, gastos-web]
     networks: [publica]
 
 volumes:

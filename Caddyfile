@@ -56,7 +56,15 @@ api.gastos.{$DOMINIO} {
       encode gzip
 
       # Sin handle_path para ficheros: las fotos de tickets no se persisten (D10),
-      # así que TODO va al backend. El bloque de gastos.{$DOMINIO} se añadirá
-      # cuando exista el contenedor del frontend.
+
       reverse_proxy gastos-api:8080
+}
+
+# ---------- La PWA de gastos ----------
+gastos.{$DOMINIO} {
+      import registro gastos-web
+      encode gzip zstd
+
+      # Las cabeceras de caché las pone el Caddy de dentro del contenedor.
+      reverse_proxy gastos-web:80
 }
