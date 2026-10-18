@@ -78,6 +78,49 @@ services:
     mem_limit: 128m
     # Sin 'ports': la única puerta a internet es el 443 de Caddy.
     networks: [publica]
+
+  cuadrante-api:
+    build: ./cuadrante-backend
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:mysql://db:3306/cuadrante
+      DB_USER: ${CUADRANTE_DB_USER}
+      DB_PASSWORD: ${CUADRANTE_DB_PASSWORD}
+      JWT_SECRET: ${CUADRANTE_JWT_SECRET}
+      CORS_ORIGINS: https://cuadrante.${DOMINIO}
+      # Enlace del correo de bienvenida. Sin ella apuntaría a localhost:4201.
+      WEB_URL: https://cuadrante.${DOMINIO}
+      # El servidor y el usuario son comunes a todas las aplicaciones; la clave, propia.
+      MAIL_HOST: ${SMTP_HOST}
+      MAIL_PORT: ${SMTP_PORT}
+      MAIL_USERNAME: ${SMTP_USERNAME}
+      MAIL_PASSWORD: ${CUADRANTE_SMTP_PASSWORD}
+      # Entre comillas por el espacio y los <>. La dirección es la del remitente creado en Brevo.
+      MAIL_FROM: "Cuadrante <no-reply@${DOMINIO}>"
+    healthcheck:
+      # Igual que gastos-api: la imagen no trae curl, pero sí bash. El health no
+      # mira el correo (management.health.mail.enabled=false): si Brevo cae, la API sigue sana.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /actuator/health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && head -1 <&3 | grep -q ' 200 '"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      db:
+        condition: service_healthy
+    # 'interna' para llegar a la base; 'publica' para que Caddy la alcance y para salir a Brevo
+    # (la red interna no tiene ruta a internet). Sin 'ports' y sin volúmenes.
+    networks: [interna, publica]
+
+  cuadrante-web:
+    build: ./cuadrante-frontend
+    restart: unless-stopped
+    mem_limit: 128m
+    # Sin 'ports': la única puerta a internet es el 443 de Caddy.
+    networks: [publica]
+
   caddy:
     build: ./auto-blog
     restart: unless-stopped
@@ -94,7 +137,7 @@ services:
       - ./logs:/var/log/caddy   # los logs, legibles desde el anfitrión
       - caddy_data:/data       # certificados TLS
       - caddy_config:/config
-    depends_on: [backend, gastos-api, gastos-web]
+    depends_on: [backend, gastos-api, gastos-web, cuadrante-api, cuadrante-web]
     networks: [publica]
 
 volumes:

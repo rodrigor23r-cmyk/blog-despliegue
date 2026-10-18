@@ -68,3 +68,23 @@ gastos.{$DOMINIO} {
       # Las cabeceras de caché las pone el Caddy de dentro del contenedor.
       reverse_proxy gastos-web:80
 }
+
+# ---------- API de cuadrante ----------
+# En un subdominio y nunca en una ruta (D17 de cuadrante): una ruta como
+# /cuadrante/api la contestaría el try_files del blog con un 200 engañoso.
+api.cuadrante.{$DOMINIO} {
+      import registro cuadrante-api
+      encode gzip
+
+      # Sin ficheros que servir aparte: TODO va al backend.
+      reverse_proxy cuadrante-api:8080
+}
+
+# ---------- La web de cuadrante ----------
+cuadrante.{$DOMINIO} {
+      import registro cuadrante-web
+      encode gzip zstd
+
+      # Las cabeceras de caché las pone el Caddy de dentro del contenedor.
+      reverse_proxy cuadrante-web:80
+}

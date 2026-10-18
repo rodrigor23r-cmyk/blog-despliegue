@@ -150,6 +150,98 @@ cualquier ruta. Para saber quién contesta, mira el cuerpo del 401: el del blog 
 
 ---
 
+## Caso E — Desplegar o actualizar `cuadrante`
+
+Como gastos: mismo Compose, base `cuadrante` y usuario `cuadrante_user` propios, y dos subdominios.
+Lo nuevo es que **sus dos repositorios son privados** (llevan datos de un cliente) y que **envía
+correo** (Brevo, más abajo).
+
+```bash
+# En el VPS
+cd /opt/blog
+git pull
+bash desplegar-cuadrante.sh          # API y web; o 'api' / 'web' para solo una
+```
+
+Clona o actualiza `cuadrante-backend` y `cuadrante-frontend`, reconstruye, espera al healthcheck,
+**reinicia** Caddy y comprueba por HTTPS: `/actuator/health` 200, `/api/auth/me` sin token 401,
+el sondeo CORS desde la web, la web con su `<app-root>`, una ruta interna 200 y el `index.html`
+sin caché. Es idempotente.
+
+**La primera vez**, antes de eso, dos cosas:
+
+**1. Las claves de despliegue** (una por repositorio: GitHub no deja repetir una clave). Solo
+lectura y solo para su repositorio, sin caducidad:
+
+```bash
+ssh-keygen -t ed25519 -N '' -C 'vps cuadrante_backend'  -f ~/.ssh/cuadrante_backend
+ssh-keygen -t ed25519 -N '' -C 'vps cuadrante_frontend' -f ~/.ssh/cuadrante_frontend
+
+cat >> ~/.ssh/config <<'EOF'
+Host github-cuadrante-backend
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/cuadrante_backend
+    IdentitiesOnly yes
+Host github-cuadrante-frontend
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/cuadrante_frontend
+    IdentitiesOnly yes
+EOF
+chmod 600 ~/.ssh/config
+
+cat ~/.ssh/cuadrante_backend.pub    # → GitHub, repo cuadrante_backend → Settings → Deploy keys
+cat ~/.ssh/cuadrante_frontend.pub   # → ídem en cuadrante_frontend. SIN marcar «Allow write access»
+
+ssh -T github-cuadrante-backend     # debe decir «Hi rodrigor23r-cmyk/cuadrante_backend! You've successfully authenticated»
+ssh -T github-cuadrante-frontend
+```
+
+`IdentitiesOnly yes` evita que ssh ofrezca otra clave antes que la del alias: GitHub aceptaría
+la primera que reconozca y contestaría «Repository not found» para el otro repositorio. La primera
+conexión pregunta si te fías de `github.com`: compara la huella con la que publica GitHub
+(*About GitHub's SSH key fingerprints*; la ED25519 es `SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU`).
+
+**2. La base y las variables**:
+
+```bash
+bash preparar-cuadrante.sh   # crea la base 'cuadrante', cuadrante_user y las variables del .env
+```
+
+Pregunta el **usuario SMTP** de Brevo y la **clave SMTP** `cuadrante-prod` (no se ve al pegarla).
+Para cambiarlas después (por ejemplo, si se anula la clave en Brevo):
+`CAMBIAR_CORREO=1 bash preparar-cuadrante.sh` y `docker compose up -d cuadrante-api`.
+
+> ⚠️ Repositorios `cuadrante_backend` / `cuadrante_frontend` (guion bajo), directorios
+> `cuadrante-backend` / `cuadrante-frontend` (guion medio), que es lo que dice `build:`.
+
+> ⚠️ Las dos cuentas de cuadrante **nacen sin contraseña**. Se entra la primera vez con
+> «¿Has olvidado la contraseña?»: eso prueba de paso que el correo sale.
+
+```
+cuadrante.taller-barataria.io       → la web de cuadrante (Angular sobre caddy:2-alpine)
+api.cuadrante.taller-barataria.io   → API de cuadrante
+```
+
+### El correo transaccional (común a todas las aplicaciones)
+
+Brevo, plan gratuito (300 correos al día). La cuenta es de Rodrigo, no de ningún cliente.
+
+| Pieza | Valor |
+|---|---|
+| Dominio autenticado | `taller-barataria.io` |
+| DNS (en Hostinger) | TXT `brevo-code:…` · CNAME `brevo1._domainkey` y `brevo2._domainkey` (DKIM) · TXT `v=spf1 include:spf.brevo.com ~all` · TXT `_dmarc` `v=DMARC1; p=none; rua=mailto:rua@dmarc.brevo.com` |
+| Servidor | `smtp-relay.brevo.com:587`, STARTTLS (comprobado abierto desde el VPS) |
+| `.env` | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME` comunes; **una clave por aplicación** (`CUADRANTE_SMTP_PASSWORD`) |
+| Remitente | `no-reply@taller-barataria.io`. El dominio **no recibe** correo: el MX apunta al VPS y ahí no hay servidor de correo |
+
+Una aplicación nueva que quiera enviar: una clave SMTP nueva en Brevo, su variable
+`<APP>_SMTP_PASSWORD` en el `.env`, y en su servicio del Compose `MAIL_HOST: ${SMTP_HOST}`, etc.
+Si algún día se pasa el DMARC a `p=quarantine`, antes mirar en Brevo que todo sale firmado.
+
+---
+
 ## Caso C — Cambio en `docker-compose.yml` o en el `Caddyfile`
 
 Estos ficheros viven en el repositorio **`blog-despliegue`**, así que viajan por git
