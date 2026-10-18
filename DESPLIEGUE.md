@@ -11,7 +11,7 @@ VPS: `deploy@77.37.122.44` · Proyecto Compose en `/opt/blog`
 |---|---|---|---|
 | Código del **backend** | git | `docker compose up -d --build backend` | ~20 s |
 | Código del **frontend** | git | `docker compose up -d --build caddy` | < 1 s |
-| **Caddyfile** | git | `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile` | ninguno |
+| **Caddyfile** | git | `docker compose restart caddy` (**no** `caddy reload`: tras un `git pull` relee el fichero viejo sin avisar; ver «Corrección del 2026-09-11») | 2–3 s |
 | **docker-compose.yml** | git | `docker compose up -d` | según servicio |
 | **.env** | a mano | `docker compose up -d` | según servicio |
 
