@@ -13,6 +13,7 @@ mismo repositorio.
 |---|---|---|
 | Posts, usuarios, categorías, comentarios | volumen `blog_db_data` | `mysqldump` comprimido → `db-FECHA.sql.gz` |
 | **Gastos, liquidaciones, tiendas** | misma instancia, base `gastos` | `mysqldump` comprimido → `gastos-FECHA.sql.gz` |
+| **Cuadrante de turnos** (datos de un cliente) | misma instancia, base `cuadrante` | `mysqldump` comprimido → `cuadrante-FECHA.sql.gz` |
 | Imágenes subidas | volumen `blog_uploads` | `tar.gz` |
 | Código del backend y del frontend | GitHub | ya está en git |
 | `docker-compose.yml`, `Caddyfile`, `backup.sh` | GitHub (`blog-despliegue`) | ya está en git |
@@ -258,6 +259,54 @@ representación haga fallar un ensayo que en realidad está bien.
 El guardián de tamaño para `gastos` está en **5 KB**: 473 apuntes ocupan ~11 KB comprimidos, así
 que un fichero menor es un volcado truncado. Un backup vacío que parece bueno es peor que no
 tenerlo.
+
+---
+
+### La base `cuadrante` · desde el 2026-10-18
+
+Desde el 2026-10-18 `backup.sh` vuelca **cuatro** cosas: la base del blog, `gastos`, `cuadrante`
+y el volumen de imágenes. `cuadrante` va, como `gastos`, en su propio fichero.
+
+> 🔒 **Esa copia lleva datos de un cliente**: los turnos y los nombres de sus recepcionistas, y
+> las cuentas con sus correos y los hashes de sus contraseñas. Lo mismo vale para la copia que
+> te traes con `rsync` a la WSL: no se sube a ningún sitio ni se adjunta a nada.
+
+**Su guardián no mira el tamaño, mira el contenido.** El esquema vacío de cuadrante ya ocupa unos
+2 KB comprimido, y la base recién desplegada unos 2,7 KB (medido el 18-10 con las 15 migraciones
+en un MySQL 8.4.9 desechable): un límite de tamaño no distinguiría un volcado bueno de uno sin
+datos. `backup.sh` comprueba dos cosas, y si falla alguna no guarda nada:
+
+- que la **última línea** es `-- Dump completed on …`: mysqldump la escribe al terminar, así que
+  un volcado cortado a medias no la tiene;
+- que hay datos de las **tres tablas que nunca están vacías**: `flyway_schema_history`, `usuario`
+  (las cuentas de V9) y `codigo` (el catálogo de V4).
+
+Las dos se probaron rompiéndolas a propósito: un volcado cortado a los 4 KB y una base sin datos.
+Las dos dan `ERROR` y salen con 1.
+
+**El ensayo de restauración** tiene su propio script, porque compara otras tablas:
+
+```bash
+cd /opt/blog && bash backup.sh && bash ensayo-cuadrante.sh
+```
+
+Lanza `backup.sh` **justo antes**: el ensayo compara la copia con la producción de ese momento,
+así que cualquier cambio posterior (una celda que alguien cambia) sale como diferencia, y es normal.
+
+Restaura la copia más reciente en una base **desechable** (`cuadrante_ensayo`) y compara con
+producción, para cada tabla, el número de filas y su **huella**: la suma del CRC32 de cada fila
+entera. Contar filas no basta: una copia con todas las filas pero un hash de contraseña o el JSON
+de una versión publicada cortados pasaría por buena. La huella de las versiones incluye su JSON
+completo: es lo que se firma y se conserva cuatro años (D16 de cuadrante). Comprueba también que
+ninguna celda ni ningún saldo apunte a un trabajador o código inexistente (el volcado desactiva
+las claves ajenas al restaurar, así que no se quejaría), que todas las tablas restauradas
+tienen el cotejo `utf8mb4_spanish2_ci`, y que la columna calculada `rol_editor` (V12, la que
+impide un segundo ADMIN o GESTOR) se rehace: mysqldump no la vuelca, porque la calcula MySQL.
+Después borra la base de ensayo. **No toca producción.**
+
+Ensayado en local el 18-10 sobre esa misma base desechable con datos de prueba: `✔ LA COPIA ES
+RESTAURABLE Y COMPLETA`; y, tras cambiar una versión en «producción» después de la copia,
+`huella de las versiones … ✘`.
 
 ---
 

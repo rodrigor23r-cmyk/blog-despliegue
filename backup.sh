@@ -55,7 +55,34 @@ if [ "$(stat -c%s "$TMP_GASTOS")" -lt 5000 ]; then
 fi
 mv "$TMP_GASTOS" "$DESTINO/gastos-$FECHA.sql.gz"
 
-# ---------- 3. Imágenes subidas ----------
+# ---------- 3. Base de datos de cuadrante ----------
+# Como gastos: base, usuario y fichero propios. Lleva datos de un cliente (los turnos y
+# los nombres de sus recepcionistas, y las cuentas con sus correos y hashes).
+TMP_CUAD="$DESTINO/cuadrante-$FECHA.sql.gz.parcial"
+
+docker compose exec -T db sh -c '
+    MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysqldump -uroot \
+        --single-transaction \
+        --no-tablespaces \
+        --default-character-set=utf8mb4 \
+        cuadrante
+' | gzip > "$TMP_CUAD"
+
+# Aquí el tamaño no sirve de guardián: el esquema vacío ya ocupa ~2 KB comprimido, casi lo
+# mismo que la base recién desplegada (~2,7 KB). Se mira el contenido: que mysqldump llegó
+# al final (su última línea es «-- Dump completed») y que están las tres tablas que nunca
+# están vacías: las migraciones, las cuentas (V9) y el catálogo de códigos (V4).
+FIN=$(zcat "$TMP_CUAD" | tail -n 1)
+TABLAS=$(zcat "$TMP_CUAD" | grep -o -E '^INSERT INTO `(flyway_schema_history|usuario|codigo)`' \
+    | sort -u | wc -l || true)
+if [[ "$FIN" != "-- Dump completed"* ]] || [ "$TABLAS" -ne 3 ]; then
+    echo "ERROR: el volcado de 'cuadrante' está incompleto (final: '$FIN'; tablas clave: $TABLAS de 3)"
+    rm -f "$TMP_CUAD"
+    exit 1
+fi
+mv "$TMP_CUAD" "$DESTINO/cuadrante-$FECHA.sql.gz"
+
+# ---------- 4. Imágenes subidas ----------
 TMP_UP="$DESTINO/uploads-$FECHA.tar.gz.parcial"
 
 docker compose exec -T backend tar czf - -C /app/uploads . > "$TMP_UP"
@@ -67,10 +94,11 @@ if [ "$(stat -c%s "$TMP_UP")" -lt 1000 ]; then
 fi
 mv "$TMP_UP" "$DESTINO/uploads-$FECHA.tar.gz"
 
-# ---------- 4. Rotación ----------
+# ---------- 5. Rotación ----------
 find "$DESTINO" -type f \( -name '*.gz' -o -name '*.parcial' \) \
      -mtime +"$RETENCION" -delete
 
 echo "OK — $(ls -1 "$DESTINO"/*.gz | wc -l) copias en $DESTINO"
-ls -lh "$DESTINO/db-$FECHA.sql.gz" "$DESTINO/gastos-$FECHA.sql.gz" "$DESTINO/uploads-$FECHA.tar.gz"
+ls -lh "$DESTINO/db-$FECHA.sql.gz" "$DESTINO/gastos-$FECHA.sql.gz" \
+      "$DESTINO/cuadrante-$FECHA.sql.gz" "$DESTINO/uploads-$FECHA.tar.gz"
 
