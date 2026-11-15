@@ -28,6 +28,18 @@ sql -e "DROP DATABASE IF EXISTS $ENSAYO; CREATE DATABASE $ENSAYO CHARACTER SET u
 echo "== Restaurando la copia en ella =="
 zcat "$COPIA" | docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -uroot "$1"' sh "$ENSAYO"
 
+# El esquema cambia con la fase 2 (V16–V19): el ensayo mira qué hay en producción y
+# compara lo que exista, para que valga antes y después de desplegar. Por eso backup.sh
+# y el ensayo se lanzan seguidos: la copia y producción tienen que tener el mismo esquema.
+hay() { [ "$(sql -N -e "SELECT COUNT(*) FROM information_schema.$1")" -gt 0 ]; }
+hay_columna() { hay "columns WHERE table_schema = 'cuadrante' AND table_name = '$1' AND column_name = '$2'"; }
+hay_tabla()   { hay "tables WHERE table_schema = 'cuadrante' AND table_name = '$1'"; }
+
+# V17 renombra quién y cuándo guardó una versión: publicada_* → guardada_* (D51).
+if hay_columna version_cuadrante guardada_en; then QUIEN=guardada; else QUIEN=publicada; fi
+# V16 enlaza la cuenta con su fila del cuadrante (D31).
+if hay_columna usuario trabajador_id; then FILA="COALESCE(trabajador_id, '-')"; else FILA="'-'"; fi
+
 # Cada comprobación es «nombre|consulta», con {B} en lugar de la base: se ejecuta contra
 # producción y contra la copia, y tienen que dar lo mismo.
 #
@@ -38,7 +50,7 @@ zcat "$COPIA" | docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD
 COMPROBACIONES=(
   "migraciones (correctas)|SELECT CONCAT(COUNT(*), ' (', SUM(success), ')') FROM {B}.flyway_schema_history"
   "cuentas|SELECT COUNT(*) FROM {B}.usuario"
-  "huella de las cuentas|SELECT COALESCE(SUM(CRC32(CONCAT_WS('|', id, username, email, COALESCE(password_hash, '-'), nombre, rol, activo, version_credenciales))), 0) FROM {B}.usuario"
+  "huella de las cuentas|SELECT COALESCE(SUM(CRC32(CONCAT_WS('|', id, username, email, COALESCE(password_hash, '-'), nombre, rol, activo, version_credenciales, $FILA))), 0) FROM {B}.usuario"
   "editores (rol_editor)|SELECT COUNT(rol_editor) FROM {B}.usuario"
   "trabajadores|SELECT COUNT(*) FROM {B}.trabajador"
   "huella de trabajadores|SELECT COALESCE(SUM(CRC32(CONCAT_WS('|', id, nombre, orden, tipo, hace_noches, fecha_alta, COALESCE(fecha_salida, '-')))), 0) FROM {B}.trabajador"
@@ -48,11 +60,21 @@ COMPROBACIONES=(
   "huella de las celdas|SELECT COALESCE(SUM(CRC32(CONCAT_WS('|', trabajador_id, fecha, codigo_id, peticion))), 0) FROM {B}.asignacion"
   "días críticos|SELECT COUNT(*) FROM {B}.dia_critico"
   "saldos anuales|SELECT COUNT(*) FROM {B}.saldo_anual"
-  "versiones publicadas|SELECT COUNT(*) FROM {B}.version_cuadrante"
-  "huella de las versiones|SELECT COALESCE(SUM(CRC32(CONCAT_WS('|', anio, mes, numero, publicada_en, publicada_por_nombre, contenido))), 0) FROM {B}.version_cuadrante"
+  "versiones guardadas|SELECT COUNT(*) FROM {B}.version_cuadrante"
+  "huella de las versiones|SELECT COALESCE(SUM(CRC32(CONCAT_WS('|', anio, mes, numero, ${QUIEN}_en, ${QUIEN}_por_nombre, contenido))), 0) FROM {B}.version_cuadrante"
   "ajustes|SELECT COUNT(*) FROM {B}.ajustes"
   "códigos de verificación|SELECT COUNT(*) FROM {B}.codigo_verificacion"
 )
+# Las tablas de la fase 2, si ya están (V18 y V19).
+if hay_tabla publicacion_version; then
+    COMPROBACIONES+=(
+      "versiones publicadas|SELECT COUNT(*) FROM {B}.publicacion_version"
+      "huella de publicaciones|SELECT COALESCE(SUM(CRC32(CONCAT_WS('|', version_id, publicada_en, publicada_por_nombre))), 0) FROM {B}.publicacion_version"
+    )
+fi
+if hay_tabla version_vista; then
+    COMPROBACIONES+=("versiones vistas|SELECT COUNT(*) FROM {B}.version_vista")
+fi
 
 echo
 echo "===== PRODUCCIÓN frente a LA COPIA RESTAURADA ====="
@@ -75,7 +97,15 @@ HUERFANOS=$(sql -N -e "
 SELECT (SELECT COUNT(*) FROM $ENSAYO.asignacion a LEFT JOIN $ENSAYO.trabajador t ON t.id = a.trabajador_id WHERE t.id IS NULL)
      + (SELECT COUNT(*) FROM $ENSAYO.asignacion a LEFT JOIN $ENSAYO.codigo c ON c.id = a.codigo_id WHERE c.id IS NULL)
      + (SELECT COUNT(*) FROM $ENSAYO.saldo_anual s LEFT JOIN $ENSAYO.trabajador t ON t.id = s.trabajador_id WHERE t.id IS NULL);")
-echo "   celdas o saldos que apuntan a algo inexistente: $HUERFANOS"
+if hay_columna usuario trabajador_id; then
+    HUERFANOS=$(( HUERFANOS + $(sql -N -e "SELECT COUNT(*) FROM $ENSAYO.usuario u LEFT JOIN $ENSAYO.trabajador t
+        ON t.id = u.trabajador_id WHERE u.trabajador_id IS NOT NULL AND t.id IS NULL;") ))
+fi
+if hay_tabla publicacion_version; then
+    HUERFANOS=$(( HUERFANOS + $(sql -N -e "SELECT COUNT(*) FROM $ENSAYO.publicacion_version p LEFT JOIN $ENSAYO.version_cuadrante v
+        ON v.id = p.version_id WHERE v.id IS NULL;") ))
+fi
+echo "   celdas, saldos, cuentas o publicaciones que apuntan a algo inexistente: $HUERFANOS"
 
 # Una tabla restaurada con otro cotejo ordenaría y compararía distinto los nombres con tildes.
 COTEJO=$(sql -N -e "SELECT COUNT(*) FROM information_schema.tables

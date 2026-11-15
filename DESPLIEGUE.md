@@ -455,3 +455,94 @@ ls -lh /var/backups/blog/                                # las copias, 14 días 
 # Desde tu WSL, traer una copia fuera del VPS
 rsync -avz --delete deploy@77.37.122.44:/var/backups/blog/ ~/backups-blog/
 ```
+
+---
+
+## Mantenimiento del sistema operativo
+
+El VPS es **Ubuntu 24.04 LTS** sobre **KVM** (`systemd-detect-virt` → `kvm`): una máquina
+virtual completa con **su propio kernel**, así que los parches del kernel los instalamos
+nosotros y entran en vigor al reiniciar. No hace falta el panel ni la API de Hostinger para
+nada de esto: todo es `ssh` + `apt`.
+
+### Qué está automatizado (desde el 2026-11-04)
+
+| | Cuándo | Configurado en |
+|---|---|---|
+| Parches de seguridad de Ubuntu | a diario | `/etc/apt/apt.conf.d/20auto-upgrades` |
+| Reinicio, **solo si un parche lo exige** | **04:30 UTC** | `/etc/apt/apt.conf.d/52unattended-upgrades-local` |
+| Backup | 03:30 UTC | crontab de `deploy` (ver [BACKUPS.md](BACKUPS.md)) |
+
+El reloj del servidor va en **UTC**: las 04:30 son las 05:30 en invierno y las 06:30 en verano
+en España. El reinicio va **una hora después del backup** a propósito, para no cortarlo a medias.
+
+Solo se actualizan los repositorios de Ubuntu: **Docker no** (viene de su propio repositorio) y
+las imágenes tampoco (`mysql:8.4` está fijada en el Compose). El corte de un reinicio es de 1–2
+minutos; los contenedores vuelven solos gracias a `restart: unless-stopped`.
+
+El fichero del reinicio contiene:
+
+```
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "04:30";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+```
+
+Comprobar que la configuración funciona (no instala nada):
+
+```bash
+sudo unattended-upgrade --dry-run --debug 2>&1 | tail -20
+```
+
+### Ante un aviso de CVE
+
+```bash
+sudo pro fix CVE-AAAA-NNNNN
+```
+
+| Responde | Significa | Qué hacer |
+|---|---|---|
+| ✔ resolved | ya parcheado | nada |
+| *A fix is coming soon* | Ubuntu aún no ha publicado el parche | esperar; el automático lo instalará |
+| ofrece instalar el parche | parche disponible | aceptar y reiniciar si lo pide |
+
+Si es un CVE **del kernel**, además: `uname -r` tiene que mostrar una versión **mayor** que la
+de antes del reinicio. Si no, el parche está instalado pero no en uso.
+
+> Los avisos legítimos salen al entrar por SSH o con `pro fix`. Si llega uno por correo pidiendo
+> instalar algo o pinchar un enlace, desconfía.
+
+### Actualizar a mano
+
+```bash
+cd /opt/blog && ./backup.sh                    # 1. backup (y snapshot en el panel de Hostinger si toca el kernel)
+sudo apt update && sudo apt full-upgrade       # 2. actualizar; ante un conffile, quedarse con el tuyo
+cat /var/run/reboot-required 2>/dev/null       # 3. si el fichero existe, hay que reiniciar
+sudo reboot
+docker compose ps                              # 4. tras el reinicio: los 7 servicios Up / healthy
+```
+
+> ⚠️ **No hagas `docker compose stop` antes de reiniciar.** Con `restart: unless-stopped`, un
+> contenedor parado a mano **no vuelve a arrancar** tras el reinicio. Reinicia directamente;
+> si alguno faltara después, `docker compose up -d`.
+
+Al terminar `apt`, `needrestart` puede listar:
+
+- **«User sessions running outdated binaries»**: tu propia sesión SSH. Sal y vuelve a entrar.
+- **«Service restarts being deferred»** (dbus, logind…): se resuelve en el próximo reinicio.
+- **«Running kernel seems to be up-to-date»**: no había kernel nuevo; no hace falta reiniciar.
+
+Si `apt` actualiza Docker, el demonio se reinicia y **todos los contenedores también**
+(`docker compose ps` mostrará «Up N minutes»). Es normal.
+
+### Falsa alarma: `sha256:…` en la columna IMAGE
+
+Desde la actualización de Docker del 2026-11-04, `docker compose ps` puede mostrar
+`sha256:ebd8…` en lugar de `blog-backend` aunque el contenedor use la imagen buena. Para saber si
+de verdad corre una versión vieja, no mires el identificador: compara la fecha del último commit
+con la de creación del contenedor, o pregunta a la propia API:
+
+```bash
+git -C /opt/blog/blog log -1 --format='%ci %s'
+docker inspect -f '{{.Created}}' blog-backend-1
+```

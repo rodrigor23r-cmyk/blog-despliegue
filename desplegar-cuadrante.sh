@@ -112,14 +112,23 @@ echo
 echo "===== COMPROBACIÓN ====="
 
 if [ "$QUE" != web ]; then
-    echo "-- Flyway (debe haber aplicado 15 migraciones la primera vez, o validado 15 después) --"
+    # Lo esperado se cuenta en el propio código desplegado, no se escribe a mano: así
+    # sigue valiendo cuando lleguen migraciones nuevas (V20 con las peticiones, H9).
+    MIGRACIONES=cuadrante-backend/src/main/resources/db/migration
+    ESPERADAS=$(ls "$MIGRACIONES"/V*__*.sql | wc -l)
+    TABLAS_ESPERADAS=$(( $(grep -hiE '^\s*CREATE TABLE' "$MIGRACIONES"/V*__*.sql | wc -l) + 1 ))
+
+    echo "-- Flyway (lo que ha hecho al arrancar esta vez) --"
     docker compose logs cuadrante-api 2>/dev/null | grep -i "Successfully applied\|Successfully validated" | tail -2 \
         || echo "  (sin líneas de Flyway)"
 
-    echo "-- Tablas creadas --"
-    docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -uroot -N -e "
-    SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=\"cuadrante\";"' \
-        | xargs -I{} echo "  {} tablas (deben ser 10: las 9 del modelo + flyway_schema_history)"
+    sqlroot() { docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -uroot -N -e "$1"' sh "$1"; }
+    APLICADAS=$(sqlroot "SELECT COUNT(*) FROM cuadrante.flyway_schema_history WHERE success = 1 AND version IS NOT NULL;")
+    ULTIMA=$(sqlroot "SELECT MAX(CAST(version AS UNSIGNED)) FROM cuadrante.flyway_schema_history WHERE success = 1;")
+    echo "  migraciones aplicadas: $APLICADAS de $ESPERADAS en el código (la última, V$ULTIMA)"
+
+    TABLAS=$(sqlroot "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'cuadrante';")
+    echo "  tablas: $TABLAS (deben ser $TABLAS_ESPERADAS: las de las migraciones + flyway_schema_history)"
 
     CODIGO=$(esperar "https://$DOMINIO_API/actuator/health" 200)
     echo "  https://$DOMINIO_API/actuator/health -> $CODIGO   (debe ser 200)"
@@ -156,9 +165,22 @@ if [ "$QUE" != api ]; then
     # Angular resuelve las rutas en el navegador: recargar en una ruta interna no debe dar 404.
     curl -sS -o /dev/null -w "  /login (ruta interna) -> %{http_code}   (debe ser 200)\n" "https://$DOMINIO_WEB/login" || true
 
-    echo "-- El index.html no se cachea (si no, una versión nueva no llegaría) --"
-    curl -sS -o /dev/null -D - "https://$DOMINIO_WEB/" | tr -d '\r' | grep -i '^cache-control:' \
-        | sed 's/^/  /' || echo "  (sin Cache-Control)"
+    # El portal es una PWA (fase 2): estos ficheros deciden si hay versión nueva y no
+    # se pueden guardar en caché. Con uno guardado, el portal no se actualizaría nunca.
+    echo "-- Sin caché: el index.html, las rutas y lo que decide si hay versión nueva --"
+    for ruta in / /portal /ngsw.json /ngsw-worker.js /manifest.webmanifest; do
+        CABECERAS=$(curl -sS -o /dev/null -D - "https://$DOMINIO_WEB$ruta" | tr -d '\r')
+        CODIGO=$(echo "$CABECERAS" | awk 'NR==1{print $2}')
+        CACHE=$(echo "$CABECERAS" | grep -i '^cache-control:' | cut -d' ' -f2- || true)
+        printf '  %-22s -> %s  Cache-Control: %s   (debe ser 200 y no-cache)\n' "$ruta" "$CODIGO" "${CACHE:-(ninguno)}"
+    done
+
+    echo "-- El service worker sirve su lista de ficheros (si no, el portal no se instala) --"
+    if curl -sS "https://$DOMINIO_WEB/ngsw.json" | grep -q '"navigationUrls"'; then
+        echo "  ngsw.json es la lista del service worker: correcto"
+    else
+        echo "  ATENCIÓN: /ngsw.json no es la lista del service worker (¿un index.html?)"
+    fi
 fi
 
 echo

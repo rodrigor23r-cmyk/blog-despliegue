@@ -135,6 +135,31 @@ Pide la passphrase de la clave SSH, **y por eso no está automatizado**: una cla
 en un cron sería una llave permanente al servidor guardada en el disco de un escritorio.
 Ejecútalo a mano una vez por semana; con catorce días de retención en el VPS hay margen de sobra.
 
+**Antes de lanzarlo, si algo va mal en el VPS, ensáyalo con `-n`** (`rsync -avzn --delete …`): enseña
+lo que haría sin tocar nada. Un espejo copia también las pérdidas: si la carpeta del VPS se vaciara,
+`--delete` vaciaría la tuya. Muchas líneas `deleting` son la señal para parar.
+
+### Copia mensual de `cuadrante` · **en tu WSL**
+
+El espejo de `rsync` guarda lo mismo que el VPS: **14 días**. Para `cuadrante` no basta: sus
+versiones publicadas son lo que se firma y se conserva **cuatro años** (D16 de cuadrante). Cada
+volcado diario las contiene todas, pero si el VPS desaparece y la copia más reciente estuviera mal,
+no habría nada más antiguo. Por eso, **una vez al mes, justo después del `rsync`**, se aparta la
+última copia de `cuadrante` a una carpeta que el espejo no toca:
+
+```bash
+mkdir -p ~/backups-cuadrante-mensual && chmod 700 ~/backups-cuadrante-mensual
+cp -p "$(ls -t ~/backups-blog/cuadrante-*.sql.gz | head -1)" ~/backups-cuadrante-mensual/
+ls -lh ~/backups-cuadrante-mensual/
+```
+
+- **No se borra nunca nada de esa carpeta.** Cada copia ocupa unos 8 KB (octubre de 2026, con un
+  mes cargado): cuatro años son menos de medio mega.
+- `cp -p` conserva la fecha del fichero, así que `ls -lt` las ordena por cuándo se hicieron.
+- `chmod 700` porque lleva **datos de un cliente** (nombres, turnos y las cuentas con sus correos).
+- Se restaura igual que la diaria: `ensayo-cuadrante.sh` con `ORIGEN` apuntando a la carpeta donde
+  la pongas en el VPS, o el procedimiento de «Cómo restaurar de verdad» con la base `cuadrante`.
+
 ---
 
 ## Las copias automáticas
@@ -290,7 +315,7 @@ Las dos dan `ERROR` y salen con 1.
 cd /opt/blog && bash backup.sh && bash ensayo-cuadrante.sh
 ```
 
-Lanza `backup.sh` **justo antes**: el ensayo compara la copia con la producción de ese momento,
+*Desde el 15-11 vale para el esquema de antes y de después de la fase 2 (V16–V19): mira qué columnas y tablas hay en producción y compara las que existan (`publicada_*` o `guardada_*` en las versiones, y las publicaciones y lo visto si ya están). Ensayado en local con los dos esquemas.* Lanza `backup.sh` **justo antes**: el ensayo compara la copia con la producción de ese momento,
 así que cualquier cambio posterior (una celda que alguien cambia) sale como diferencia, y es normal.
 
 Restaura la copia más reciente en una base **desechable** (`cuadrante_ensayo`) y compara con
@@ -358,5 +383,7 @@ causa real del aviso *«Using a password on the command line interface can be in
   muere, pierdes lo que no llegaste a traerte.
 - **Un fichero subido justo durante el `tar`** podría quedar a medias en esa copia. Riesgo
   mínimo y se corrige solo al día siguiente.
-- **No hay copias mensuales de largo plazo.** La retención son 14 días: sirve para un desastre,
-  no para recuperar un post que borraste hace dos meses.
+- **No hay copias mensuales de largo plazo**, salvo la de `cuadrante` (a mano, en la WSL). La
+  retención son 14 días: sirve para un desastre, no para recuperar un post que borraste hace dos meses.
+- **La copia mensual de `cuadrante` depende de que te acuerdes.** Si se salta un mes, no pasa
+  nada mientras la siguiente llegue: cada copia contiene todas las versiones hasta ese día.
