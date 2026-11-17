@@ -75,6 +75,16 @@ fi
 if hay_tabla version_vista; then
     COMPROBACIONES+=("versiones vistas|SELECT COUNT(*) FROM {B}.version_vista")
 fi
+# Las peticiones de los trabajadores (V20, H9). fecha_pendiente es una columna calculada:
+# mysqldump no la vuelca y MySQL la rehace al restaurar; si no, el índice que impide dos
+# pendientes del mismo día (D70) dejaría de funcionar. Por eso se compara también.
+if hay_tabla peticion; then
+    COMPROBACIONES+=(
+      "peticiones|SELECT COUNT(*) FROM {B}.peticion"
+      "huella de peticiones|SELECT COALESCE(SUM(CRC32(CONCAT_WS('|', id, trabajador_id, fecha, codigo_id, COALESCE(comentario, '-'), estado, pedida_en, COALESCE(resuelta_en, '-'), COALESCE(motivo_rechazo, '-')))), 0) FROM {B}.peticion"
+      "peticiones pendientes|SELECT COUNT(fecha_pendiente) FROM {B}.peticion"
+    )
+fi
 
 echo
 echo "===== PRODUCCIÓN frente a LA COPIA RESTAURADA ====="
@@ -101,11 +111,15 @@ if hay_columna usuario trabajador_id; then
     HUERFANOS=$(( HUERFANOS + $(sql -N -e "SELECT COUNT(*) FROM $ENSAYO.usuario u LEFT JOIN $ENSAYO.trabajador t
         ON t.id = u.trabajador_id WHERE u.trabajador_id IS NOT NULL AND t.id IS NULL;") ))
 fi
+if hay_tabla peticion; then
+    HUERFANOS=$(( HUERFANOS + $(sql -N -e "SELECT COUNT(*) FROM $ENSAYO.peticion p LEFT JOIN $ENSAYO.trabajador t
+        ON t.id = p.trabajador_id WHERE t.id IS NULL;") ))
+fi
 if hay_tabla publicacion_version; then
     HUERFANOS=$(( HUERFANOS + $(sql -N -e "SELECT COUNT(*) FROM $ENSAYO.publicacion_version p LEFT JOIN $ENSAYO.version_cuadrante v
         ON v.id = p.version_id WHERE v.id IS NULL;") ))
 fi
-echo "   celdas, saldos, cuentas o publicaciones que apuntan a algo inexistente: $HUERFANOS"
+echo "   celdas, saldos, cuentas, publicaciones o peticiones que apuntan a algo inexistente: $HUERFANOS"
 
 # Una tabla restaurada con otro cotejo ordenaría y compararía distinto los nombres con tildes.
 COTEJO=$(sql -N -e "SELECT COUNT(*) FROM information_schema.tables
