@@ -1,4 +1,7 @@
 .env
+# Las copias que hacen preparar-gastos.sh y preparar-cuadrante.sh antes de tocar el .env:
+# llevan las mismas claves, y este repositorio es público.
+.env.copia-*
 blog
 auto-blog
 .vscode/
